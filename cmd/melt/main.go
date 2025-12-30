@@ -153,9 +153,10 @@ This is an auxiliary utility for generating seed phrases of various lengths.
 Note: These phrases cannot be used with 'melt restore' to recover the original key.
 The main 'melt' command should be used for backup and restore operations.
 
-Valid word counts are: 12, 15, 18, 21, or 24 (BIP39 standard).`,
+Valid word counts are: 12, 15, 16, 18, 21, or 24 (BIP39 standard).`,
 		Example: `  melt slice ~/.ssh/id_ed25519 --words 12
   melt slice ~/.ssh/id_ed25519 --words 15
+  melt slice ~/.ssh/id_ed25519 --words 16
   cat ~/.ssh/id_ed25519 | melt slice --words 18`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -219,7 +220,7 @@ func init() {
 	restoreCmd.PersistentFlags().StringVarP(&mnemonic, "seed", "s", "-", "Seed phrase")
 	_ = restoreCmd.MarkFlagRequired("seed")
 
-	sliceCmd.PersistentFlags().IntVarP(&wordCount, "words", "w", 24, "Number of words in the phrase (12, 15, 18, 21, or 24)")
+	sliceCmd.PersistentFlags().IntVarP(&wordCount, "words", "w", 24, "Number of words in the phrase (12, 15, 16, 18, 21, or 24)")
 }
 
 func main() {
@@ -302,9 +303,9 @@ func backup(path string, pass []byte) (string, error) {
 // This is an auxiliary utility and the generated phrases cannot be used with restore.
 func slice(path string, pass []byte, wordCount int) (string, error) {
 	// Validate word count
-	validCounts := map[int]bool{12: true, 15: true, 18: true, 21: true, 24: true}
+	validCounts := map[int]bool{12: true, 15: true, 16: true, 18: true, 21: true, 24: true}
 	if !validCounts[wordCount] {
-		return "", fmt.Errorf("invalid word count: %d (must be 12, 15, 18, 21, or 24)", wordCount)
+		return "", fmt.Errorf("invalid word count: %d (must be 12, 15, 16, 18, 21, or 24)", wordCount)
 	}
 
 	f, err := openFileOrStdin(path)
@@ -331,9 +332,8 @@ func slice(path string, pass []byte, wordCount int) (string, error) {
 
 	switch key := key.(type) {
 	case *ed25519.PrivateKey:
-		// TODO: Implement slice functionality to generate phrases of different lengths
-		// For now, return an error indicating it's not yet implemented
-		return "", fmt.Errorf("slice functionality not yet implemented (wordCount: %d)", wordCount)
+		// Generate mnemonic with the specified word count
+		return melt.ToMnemonicWithLength(key, wordCount)
 	default:
 		return "", fmt.Errorf("unknown key type: %v", key)
 	}
