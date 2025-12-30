@@ -46,6 +46,7 @@ var (
 
 	mnemonic string
 	language string
+	wordCount int
 
 	rootCmd = &cobra.Command{
 		Use: "melt",
@@ -143,6 +144,54 @@ be used to rebuild your public and private keys.`,
 		},
 	}
 
+	sliceCmd = &cobra.Command{
+		Use:   "slice",
+		Short: "Generate an arbitrary-length seed phrase from an SSH key",
+		Long: `Slice an SSH key into an arbitrary-length seed phrase.
+
+This is an auxiliary utility for generating seed phrases of various lengths.
+Note: These phrases cannot be used with 'melt restore' to recover the original key.
+The main 'melt' command should be used for backup and restore operations.
+
+Valid word counts are: 12, 15, 18, 21, or 24 (BIP39 standard).`,
+		Example: `  melt slice ~/.ssh/id_ed25519 --words 12
+  melt slice ~/.ssh/id_ed25519 --words 15
+  cat ~/.ssh/id_ed25519 | melt slice --words 18`,
+		Args:         cobra.MaximumNArgs(1),
+		SilenceUsage: true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			if err := setLanguage(language); err != nil {
+				return err
+			}
+
+			var keyPath string
+			if len(args) > 0 {
+				keyPath = args[0]
+			}
+
+			// TODO: Implement slice functionality
+			mnemonic, err := slice(keyPath, nil, wordCount)
+			if err != nil {
+				return err
+			}
+
+			if isatty.IsTerminal(os.Stdout.Fd()) {
+				b := strings.Builder{}
+				w := getWidth(maxWidth)
+
+				b.WriteRune('\n')
+				renderBlock(&b, baseStyle, w, fmt.Sprintf("Sliced key into a %d-word seed phrase (auxiliary utility - not for backup/restore):", wordCount))
+				renderBlock(&b, mnemonicStyle, w, mnemonic)
+				b.WriteRune('\n')
+
+				fmt.Println(b.String())
+			} else {
+				fmt.Print(mnemonic)
+			}
+			return nil
+		},
+	}
+
 	manCmd = &cobra.Command{
 		Use:          "man",
 		Args:         cobra.NoArgs,
@@ -165,10 +214,12 @@ be used to rebuild your public and private keys.`,
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&language, "language", "l", "en", "Language")
-	rootCmd.AddCommand(restoreCmd, manCmd)
+	rootCmd.AddCommand(restoreCmd, sliceCmd, manCmd)
 
 	restoreCmd.PersistentFlags().StringVarP(&mnemonic, "seed", "s", "-", "Seed phrase")
 	_ = restoreCmd.MarkFlagRequired("seed")
+
+	sliceCmd.PersistentFlags().IntVarP(&wordCount, "words", "w", 24, "Number of words in the phrase (12, 15, 18, 21, or 24)")
 }
 
 func main() {
@@ -242,6 +293,47 @@ func backup(path string, pass []byte) (string, error) {
 	case *ed25519.PrivateKey:
 		//nolint: wrapcheck
 		return melt.ToMnemonic(key)
+	default:
+		return "", fmt.Errorf("unknown key type: %v", key)
+	}
+}
+
+// slice generates an arbitrary-length seed phrase from an SSH key.
+// This is an auxiliary utility and the generated phrases cannot be used with restore.
+func slice(path string, pass []byte, wordCount int) (string, error) {
+	// Validate word count
+	validCounts := map[int]bool{12: true, 15: true, 18: true, 21: true, 24: true}
+	if !validCounts[wordCount] {
+		return "", fmt.Errorf("invalid word count: %d (must be 12, 15, 18, 21, or 24)", wordCount)
+	}
+
+	f, err := openFileOrStdin(path)
+	if err != nil {
+		return "", fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return "", fmt.Errorf("could not read key: %w", err)
+	}
+
+	key, err := parsePrivateKey(bts, pass)
+	if err != nil && isPasswordError(err) {
+		pass, err := askKeyPassphrase(path)
+		if err != nil {
+			return "", err
+		}
+		return slice(path, pass, wordCount)
+	}
+	if err != nil {
+		return "", fmt.Errorf("could not parse key: %w", err)
+	}
+
+	switch key := key.(type) {
+	case *ed25519.PrivateKey:
+		// TODO: Implement slice functionality to generate phrases of different lengths
+		// For now, return an error indicating it's not yet implemented
+		return "", fmt.Errorf("slice functionality not yet implemented (wordCount: %d)", wordCount)
 	default:
 		return "", fmt.Errorf("unknown key type: %v", key)
 	}
