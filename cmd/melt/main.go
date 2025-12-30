@@ -47,6 +47,7 @@ var (
 	mnemonic string
 	language string
 	wordCount int
+	raw      bool
 
 	rootCmd = &cobra.Command{
 		Use: "melt",
@@ -72,6 +73,10 @@ be used to rebuild your public and private keys.`,
 			mnemonic, err := backup(keyPath, nil)
 			if err != nil {
 				return err
+			}
+			if raw {
+				fmt.Print(mnemonic)
+				return nil
 			}
 			if isatty.IsTerminal(os.Stdout.Fd()) {
 				b := strings.Builder{}
@@ -176,6 +181,10 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24 (BIP39 standard).`,
 				return err
 			}
 
+			if raw {
+				fmt.Print(mnemonic)
+				return nil
+			}
 			if isatty.IsTerminal(os.Stdout.Fd()) {
 				b := strings.Builder{}
 				w := getWidth(maxWidth)
@@ -215,6 +224,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24 (BIP39 standard).`,
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&language, "language", "l", "en", "Language")
+	rootCmd.PersistentFlags().BoolVar(&raw, "raw", false, "Print raw seed phrase (words and spaces only)")
 	rootCmd.AddCommand(restoreCmd, sliceCmd, manCmd)
 
 	restoreCmd.PersistentFlags().StringVarP(&mnemonic, "seed", "s", "-", "Seed phrase")
