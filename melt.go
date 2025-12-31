@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/tyler-smith/go-bip39"
+	"polyseed"
 )
 
 // ToMnemonic takes a ed25519 private key and returns the list of words.
@@ -39,20 +40,45 @@ func FromMnemonic(mnemonic string) (ed25519.PrivateKey, error) {
 // The generated phrases cannot be used with FromMnemonic to recover the
 // original key if the word count is less than 24.
 //
-// Valid word counts are: 12, 15, 16, 18, 21, or 24 (BIP39 standard).
+// Valid word counts are: 12, 15, 16, 18, 21, or 24.
 // The entropy size is determined by the word count:
-//   - 12 words = 128 bits (16 bytes)
-//   - 15 words = 160 bits (20 bytes)
-//   - 16 words = 176 bits (22 bytes)
-//   - 18 words = 192 bits (24 bytes)
-//   - 21 words = 224 bits (28 bytes)
-//   - 24 words = 256 bits (32 bytes)
+//   - 12 words = 128 bits (16 bytes) - BIP39
+//   - 15 words = 160 bits (20 bytes) - BIP39
+//   - 16 words = 150 bits (19 bytes) - Polyseed format
+//   - 18 words = 192 bits (24 bytes) - BIP39
+//   - 21 words = 224 bits (28 bytes) - BIP39
+//   - 24 words = 256 bits (32 bytes) - BIP39
 func ToMnemonicWithLength(key *ed25519.PrivateKey, wordCount int) (string, error) {
-	// Map word count to entropy size in bytes
+	// Special handling for 16 words - use polyseed format
+	if wordCount == 16 {
+		// Get the full seed (32 bytes)
+		fullSeed := key.Seed()
+
+		// Create polyseed from the ed25519 seed bytes
+		// Use first 19 bytes (150 bits) for the secret
+		seed, err := polyseed.CreateFromBytes(fullSeed[:], 0)
+		if err != nil {
+			return "", fmt.Errorf("could not create polyseed: %w", err)
+		}
+		defer seed.Free()
+
+		// Get English language (index 0) for encoding
+		// TODO: Support other languages based on user preference
+		lang := polyseed.GetLang(0)
+		if lang == nil {
+			return "", fmt.Errorf("could not get polyseed language")
+		}
+
+		// Encode to mnemonic using Monero coin (default)
+		mnemonic := seed.Encode(lang, polyseed.CoinMonero)
+
+		return mnemonic, nil
+	}
+
+	// Map word count to entropy size in bytes for BIP39
 	entropySizeMap := map[int]int{
 		12: 16, // 128 bits
 		15: 20, // 160 bits
-		16: 22, // 176 bits
 		18: 24, // 192 bits
 		21: 28, // 224 bits
 		24: 32, // 256 bits

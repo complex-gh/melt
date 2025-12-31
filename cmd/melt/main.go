@@ -158,7 +158,9 @@ This is an auxiliary utility for generating seed phrases of various lengths.
 Note: These phrases cannot be used with 'melt restore' to recover the original key.
 The main 'melt' command should be used for backup and restore operations.
 
-Valid word counts are: 12, 15, 16, 18, 21, or 24 (BIP39 standard).`,
+Valid word counts are: 12, 15, 16, 18, 21, or 24.
+- 12, 15, 18, 21, 24 words use BIP39 format
+- 16 words use Polyseed format`,
 		Example: `  melt slice ~/.ssh/id_ed25519 --words 12
   melt slice ~/.ssh/id_ed25519 --words 15
   melt slice ~/.ssh/id_ed25519 --words 16
@@ -175,7 +177,11 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24 (BIP39 standard).`,
 				keyPath = args[0]
 			}
 
-			// TODO: Implement slice functionality
+			// Show warning for 16 words (polyseed format) unless --raw is used
+			if wordCount == 16 && !raw {
+				_, _ = fmt.Fprintf(os.Stderr, "Warning: 16 words will be in Polyseed format (not BIP39). Use --raw to suppress this message.\n")
+			}
+
 			mnemonic, err := slice(keyPath, nil, wordCount)
 			if err != nil {
 				return err
@@ -190,7 +196,11 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24 (BIP39 standard).`,
 				w := getWidth(maxWidth)
 
 				b.WriteRune('\n')
-				renderBlock(&b, baseStyle, w, fmt.Sprintf("Sliced key into a %d-word seed phrase (auxiliary utility - not for backup/restore):", wordCount))
+				formatNote := ""
+				if wordCount == 16 {
+					formatNote = " (Polyseed format)"
+				}
+				renderBlock(&b, baseStyle, w, fmt.Sprintf("Sliced key into a %d-word seed phrase%s (auxiliary utility - not for backup/restore):", wordCount, formatNote))
 				renderBlock(&b, mnemonicStyle, w, mnemonic)
 				b.WriteRune('\n')
 
