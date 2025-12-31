@@ -48,6 +48,7 @@ var (
 	language string
 	wordCount int
 	raw      bool
+	all      bool
 
 	rootCmd = &cobra.Command{
 		Use: "melt",
@@ -164,6 +165,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 		Example: `  melt slice ~/.ssh/id_ed25519 --words 12
   melt slice ~/.ssh/id_ed25519 --words 15
   melt slice ~/.ssh/id_ed25519 --words 16
+  melt slice ~/.ssh/id_ed25519 --all
   cat ~/.ssh/id_ed25519 | melt slice --words 18`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -175,6 +177,11 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 			var keyPath string
 			if len(args) > 0 {
 				keyPath = args[0]
+			}
+
+			// Handle --all flag
+			if all {
+				return sliceAll(keyPath, raw)
 			}
 
 			// Show warning for 16 words (polyseed format) unless --raw is used
@@ -241,6 +248,7 @@ func init() {
 	_ = restoreCmd.MarkFlagRequired("seed")
 
 	sliceCmd.PersistentFlags().IntVarP(&wordCount, "words", "w", 24, "Number of words in the phrase (12, 15, 16, 18, 21, or 24)")
+	sliceCmd.PersistentFlags().BoolVar(&all, "all", false, "Generate seed phrases for all word counts (12, 15, 16, 18, 21, 24)")
 }
 
 func main() {
@@ -357,6 +365,101 @@ func slice(path string, pass []byte, wordCount int) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown key type: %v", key)
 	}
+}
+
+// sliceAll generates seed phrases for all word counts and formats them nicely.
+func sliceAll(path string, rawOutput bool) error {
+	// All valid word counts in order
+	wordCounts := []int{12, 15, 16, 18, 21, 24}
+
+	// Parse the key once
+	f, err := openFileOrStdin(path)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+	bts, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("could not read key: %w", err)
+	}
+
+	key, err := parsePrivateKey(bts, nil)
+	if err != nil && isPasswordError(err) {
+		pass, err := askKeyPassphrase(path)
+		if err != nil {
+			return err
+		}
+		key, err = parsePrivateKey(bts, pass)
+		if err != nil {
+			return fmt.Errorf("could not parse key: %w", err)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("could not parse key: %w", err)
+	}
+
+	ed25519Key, ok := key.(*ed25519.PrivateKey)
+	if !ok {
+		return fmt.Errorf("unknown key type: %v", key)
+	}
+
+	// Generate all mnemonics
+	mnemonics := make(map[int]string)
+	for _, count := range wordCounts {
+		mnemonic, err := melt.ToMnemonicWithLength(ed25519Key, count)
+		if err != nil {
+			return fmt.Errorf("could not generate %d-word mnemonic: %w", count, err)
+		}
+		mnemonics[count] = mnemonic
+	}
+
+	// Output formatting
+	if rawOutput {
+		// Raw output: just print all mnemonics separated by newlines
+		for _, count := range wordCounts {
+			fmt.Printf("%d words: %s\n", count, mnemonics[count])
+		}
+		return nil
+	}
+
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		// Formatted output for terminal
+		b := strings.Builder{}
+		w := getWidth(maxWidth)
+
+		b.WriteRune('\n')
+		renderBlock(&b, baseStyle, w, "Sliced key into all seed phrase formats (auxiliary utility - not for backup/restore):")
+		b.WriteRune('\n')
+
+		for _, count := range wordCounts {
+			formatNote := ""
+			if count == 16 {
+				formatNote = " (Polyseed format)"
+			} else {
+				formatNote = " (BIP39 format)"
+			}
+
+			header := fmt.Sprintf("%d words%s:", count, formatNote)
+			renderBlock(&b, baseStyle, w, header)
+			renderBlock(&b, mnemonicStyle, w, mnemonics[count])
+			b.WriteRune('\n')
+		}
+
+		fmt.Println(b.String())
+	} else {
+		// Non-terminal output: structured format
+		for _, count := range wordCounts {
+			formatNote := ""
+			if count == 16 {
+				formatNote = " (Polyseed)"
+			} else {
+				formatNote = " (BIP39)"
+			}
+			fmt.Printf("%d words%s: %s\n", count, formatNote, mnemonics[count])
+		}
+	}
+
+	return nil
 }
 
 func isPasswordError(err error) bool {
