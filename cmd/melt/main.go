@@ -49,6 +49,7 @@ var (
 	wordCount int
 	raw      bool
 	all      bool
+	seedPassphrase string
 
 	rootCmd = &cobra.Command{
 		Use: "melt",
@@ -166,6 +167,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
   melt slice ~/.ssh/id_ed25519 --words 15
   melt slice ~/.ssh/id_ed25519 --words 16
   melt slice ~/.ssh/id_ed25519 --all
+  melt slice ~/.ssh/id_ed25519 --words 12 --seed-passphrase "my-passphrase"
   cat ~/.ssh/id_ed25519 | melt slice --words 18`,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
@@ -181,7 +183,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 
 			// Handle --all flag
 			if all {
-				return sliceAll(keyPath, raw)
+				return sliceAll(keyPath, raw, seedPassphrase)
 			}
 
 			// Show warning for 16 words (polyseed format) unless --raw is used
@@ -189,7 +191,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 				_, _ = fmt.Fprintf(os.Stderr, "Warning: 16 words will be in Polyseed format (not BIP39). Use --raw to suppress this message.\n")
 			}
 
-			mnemonic, err := slice(keyPath, nil, wordCount)
+			mnemonic, err := slice(keyPath, nil, wordCount, seedPassphrase)
 			if err != nil {
 				return err
 			}
@@ -249,6 +251,7 @@ func init() {
 
 	sliceCmd.PersistentFlags().IntVarP(&wordCount, "words", "w", 24, "Number of words in the phrase (12, 15, 16, 18, 21, or 24)")
 	sliceCmd.PersistentFlags().BoolVar(&all, "all", false, "Generate seed phrases for all word counts (12, 15, 16, 18, 21, 24)")
+	sliceCmd.PersistentFlags().StringVar(&seedPassphrase, "seed-passphrase", "", "Passphrase to combine with SSH key seed for additional entropy")
 }
 
 func main() {
@@ -329,7 +332,8 @@ func backup(path string, pass []byte) (string, error) {
 
 // slice generates an arbitrary-length seed phrase from an SSH key.
 // This is an auxiliary utility and the generated phrases cannot be used with restore.
-func slice(path string, pass []byte, wordCount int) (string, error) {
+// seedPassphrase is combined with the SSH key seed to add additional entropy.
+func slice(path string, pass []byte, wordCount int, seedPassphrase string) (string, error) {
 	// Validate word count
 	validCounts := map[int]bool{12: true, 15: true, 16: true, 18: true, 21: true, 24: true}
 	if !validCounts[wordCount] {
@@ -352,7 +356,7 @@ func slice(path string, pass []byte, wordCount int) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return slice(path, pass, wordCount)
+		return slice(path, pass, wordCount, seedPassphrase)
 	}
 	if err != nil {
 		return "", fmt.Errorf("could not parse key: %w", err)
@@ -360,15 +364,16 @@ func slice(path string, pass []byte, wordCount int) (string, error) {
 
 	switch key := key.(type) {
 	case *ed25519.PrivateKey:
-		// Generate mnemonic with the specified word count
-		return melt.ToMnemonicWithLength(key, wordCount)
+		// Generate mnemonic with the specified word count and seed passphrase
+		return melt.ToMnemonicWithLength(key, wordCount, seedPassphrase)
 	default:
 		return "", fmt.Errorf("unknown key type: %v", key)
 	}
 }
 
 // sliceAll generates seed phrases for all word counts and formats them nicely.
-func sliceAll(path string, rawOutput bool) error {
+// seedPassphrase is combined with the SSH key seed to add additional entropy.
+func sliceAll(path string, rawOutput bool, seedPassphrase string) error {
 	// All valid word counts in order
 	wordCounts := []int{12, 15, 16, 18, 21, 24}
 
@@ -406,7 +411,7 @@ func sliceAll(path string, rawOutput bool) error {
 	// Generate all mnemonics
 	mnemonics := make(map[int]string)
 	for _, count := range wordCounts {
-		mnemonic, err := melt.ToMnemonicWithLength(ed25519Key, count)
+		mnemonic, err := melt.ToMnemonicWithLength(ed25519Key, count, seedPassphrase)
 		if err != nil {
 			return fmt.Errorf("could not generate %d-word mnemonic: %w", count, err)
 		}

@@ -5,10 +5,12 @@ package melt
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"fmt"
 
-	"github.com/tyler-smith/go-bip39"
 	"polyseed"
+
+	"github.com/tyler-smith/go-bip39"
 )
 
 // ToMnemonic takes a ed25519 private key and returns the list of words.
@@ -35,10 +37,29 @@ func FromMnemonic(mnemonic string) (ed25519.PrivateKey, error) {
 	return ed25519.NewKeyFromSeed(seed), nil
 }
 
+// combineSeedPassphrase combines a seed passphrase with the SSH key seed to create
+// combined entropy. The passphrase is hashed with SHA256 to produce 32 bytes,
+// which are then XORed with the key seed to combine the entropy deterministically.
+func combineSeedPassphrase(keySeed []byte, seedPassphrase string) []byte {
+	// Hash the passphrase to get 32 bytes of entropy
+	passphraseHash := sha256.Sum256([]byte(seedPassphrase))
+
+	// Combine by XORing the hashed passphrase with the key seed
+	combined := make([]byte, len(keySeed))
+	for i := range keySeed {
+		combined[i] = keySeed[i] ^ passphraseHash[i]
+	}
+
+	return combined
+}
+
 // ToMnemonicWithLength takes an ed25519 private key and returns a mnemonic
 // phrase of the specified word count. This is an auxiliary utility function.
 // The generated phrases cannot be used with FromMnemonic to recover the
 // original key if the word count is less than 24.
+//
+// If seedPassphrase is provided (non-empty), it will be combined with the
+// SSH key seed to add additional entropy: ENTROPY(seed-passphrase) + ENTROPY(ssh-key).
 //
 // Valid word counts are: 12, 15, 16, 18, 21, or 24.
 // The entropy size is determined by the word count:
@@ -48,15 +69,24 @@ func FromMnemonic(mnemonic string) (ed25519.PrivateKey, error) {
 //   - 18 words = 192 bits (24 bytes) - BIP39
 //   - 21 words = 224 bits (28 bytes) - BIP39
 //   - 24 words = 256 bits (32 bytes) - BIP39
-func ToMnemonicWithLength(key *ed25519.PrivateKey, wordCount int) (string, error) {
+func ToMnemonicWithLength(key *ed25519.PrivateKey, wordCount int, seedPassphrase string) (string, error) {
+	// Get the full seed (32 bytes)
+	fullSeed := key.Seed()
+
+	// Combine with seed passphrase if provided
+	var combinedSeed []byte
+	if seedPassphrase != "" {
+		combinedSeed = combineSeedPassphrase(fullSeed, seedPassphrase)
+	} else {
+		combinedSeed = make([]byte, len(fullSeed))
+		copy(combinedSeed, fullSeed)
+	}
+
 	// Special handling for 16 words - use polyseed format
 	if wordCount == 16 {
-		// Get the full seed (32 bytes)
-		fullSeed := key.Seed()
-
-		// Create polyseed from the ed25519 seed bytes
+		// Create polyseed from the combined seed bytes
 		// Use first 19 bytes (150 bits) for the secret
-		seed, err := polyseed.CreateFromBytes(fullSeed[:], 0)
+		seed, err := polyseed.CreateFromBytes(combinedSeed, 0)
 		if err != nil {
 			return "", fmt.Errorf("could not create polyseed: %w", err)
 		}
@@ -89,14 +119,11 @@ func ToMnemonicWithLength(key *ed25519.PrivateKey, wordCount int) (string, error
 		return "", fmt.Errorf("invalid word count: %d (must be 12, 15, 16, 18, 21, or 24)", wordCount)
 	}
 
-	// Get the full seed (32 bytes)
-	fullSeed := key.Seed()
-
-	// Truncate the seed to the required entropy size
+	// Truncate the combined seed to the required entropy size
 	// For shorter phrases, we use only the first N bytes
 	// This means shorter phrases represent a different key, not the original
 	entropy := make([]byte, entropySize)
-	copy(entropy, fullSeed[:entropySize])
+	copy(entropy, combinedSeed[:entropySize])
 
 	// Generate the mnemonic from the truncated entropy
 	words, err := bip39.NewMnemonic(entropy)
