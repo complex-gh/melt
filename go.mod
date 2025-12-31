@@ -1,6 +1,6 @@
 module github.com/charmbracelet/melt
 
-go 1.24.0
+go 1.25.4
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -34,3 +34,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sys v0.39.0 // indirect
 )
+
+replace polyseed => ./polyseed
