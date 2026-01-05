@@ -6,6 +6,7 @@ package melt
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 
 	"polyseed"
@@ -61,6 +62,9 @@ func combineSeedPassphrase(keySeed []byte, seedPassphrase string) []byte {
 // If seedPassphrase is provided (non-empty), it will be combined with the
 // SSH key seed to add additional entropy: ENTROPY(seed-passphrase) + ENTROPY(ssh-key).
 //
+// The word count is prepended to the entropy to ensure different word counts
+// generate completely different words, not just truncated versions of the same phrase.
+//
 // Valid word counts are: 12, 15, 16, 18, 21, or 24.
 // The entropy size is determined by the word count:
 //   - 12 words = 128 bits (16 bytes) - BIP39
@@ -82,11 +86,25 @@ func ToMnemonicWithLength(key *ed25519.PrivateKey, wordCount int, seedPassphrase
 		copy(combinedSeed, fullSeed)
 	}
 
+	// Prepend word count to the seed to ensure different word counts generate
+	// completely different words. We encode the word count as a uint16 (2 bytes)
+	// to ensure it's properly incorporated into the entropy.
+	wordCountBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(wordCountBytes, uint16(wordCount))
+
+	// Combine word count with the seed
+	prefixedSeed := make([]byte, len(wordCountBytes)+len(combinedSeed))
+	copy(prefixedSeed, wordCountBytes)
+	copy(prefixedSeed[len(wordCountBytes):], combinedSeed)
+
 	// Special handling for 16 words - use polyseed format
 	if wordCount == 16 {
-		// Create polyseed from the combined seed bytes
-		// Use first 19 bytes (150 bits) for the secret
-		seed, err := polyseed.CreateFromBytes(combinedSeed, 0)
+		// Hash the prefixed seed to get exactly 19 bytes (150 bits) for polyseed
+		// We use SHA256 and take the first 19 bytes
+		hash := sha256.Sum256(prefixedSeed)
+		polyseedBytes := hash[:19]
+
+		seed, err := polyseed.CreateFromBytes(polyseedBytes, 0)
 		if err != nil {
 			return "", fmt.Errorf("could not create polyseed: %w", err)
 		}
@@ -119,13 +137,12 @@ func ToMnemonicWithLength(key *ed25519.PrivateKey, wordCount int, seedPassphrase
 		return "", fmt.Errorf("invalid word count: %d (must be 12, 15, 16, 18, 21, or 24)", wordCount)
 	}
 
-	// Truncate the combined seed to the required entropy size
-	// For shorter phrases, we use only the first N bytes
-	// This means shorter phrases represent a different key, not the original
-	entropy := make([]byte, entropySize)
-	copy(entropy, combinedSeed[:entropySize])
+	// Hash the prefixed seed to get exactly the required entropy size
+	// This ensures different word counts produce completely different words
+	hash := sha256.Sum256(prefixedSeed)
+	entropy := hash[:entropySize]
 
-	// Generate the mnemonic from the truncated entropy
+	// Generate the mnemonic from the hashed entropy
 	words, err := bip39.NewMnemonic(entropy)
 	if err != nil {
 		return "", fmt.Errorf("could not create a mnemonic set of words: %w", err)
