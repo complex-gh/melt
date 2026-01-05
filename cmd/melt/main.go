@@ -77,7 +77,7 @@ be used to rebuild your public and private keys.`,
 				return err
 			}
 			if raw {
-				fmt.Print(mnemonic)
+				fmt.Println(mnemonic)
 				return nil
 			}
 			if isatty.IsTerminal(os.Stdout.Fd()) {
@@ -114,7 +114,7 @@ be used to rebuild your public and private keys.`,
 
 				fmt.Println(b.String())
 			} else {
-				fmt.Print(mnemonic)
+				fmt.Println(mnemonic)
 			}
 			return nil
 		},
@@ -197,7 +197,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 			}
 
 			if raw {
-				fmt.Print(mnemonic)
+				fmt.Println(mnemonic)
 				return nil
 			}
 			if isatty.IsTerminal(os.Stdout.Fd()) {
@@ -215,7 +215,7 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 
 				fmt.Println(b.String())
 			} else {
-				fmt.Print(mnemonic)
+				fmt.Println(mnemonic)
 			}
 			return nil
 		},
