@@ -469,8 +469,13 @@ func sliceAllWithPass(path string, rawOutput bool, seedPassphrase string, pass [
 	// Output formatting
 	if rawOutput {
 		// Raw output: just print all mnemonics separated by newlines
-		for _, count := range wordCounts {
-			fmt.Printf("%d words: %s\n", count, mnemonics[count])
+		for i, count := range wordCounts {
+			fmt.Printf("%d words:\n", count)
+			fmt.Println(mnemonics[count])
+			// Add blank line between each category (except after the last one)
+			if i < len(wordCounts)-1 {
+				fmt.Println()
+			}
 		}
 		return nil
 	}
