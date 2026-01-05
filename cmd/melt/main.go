@@ -34,6 +34,7 @@ const (
 var (
 	baseStyle = lipgloss.NewStyle().Margin(0, 0, 1, 2) //nolint: gomnd
 	violet    = lipgloss.Color(completeColor("#6B50FF", "63", "12"))
+	red       = lipgloss.Color(completeColor("#FF4444", "196", "9"))
 	cmdStyle  = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "#FF5E8E", Dark: "#FF5E8E"}).
 			Background(lipgloss.AdaptiveColor{Light: completeColor("#ECECEC", "255", "7"), Dark: "#1F1F1F"}).
@@ -41,6 +42,10 @@ var (
 	mnemonicStyle = baseStyle.
 			Foreground(violet).
 			Background(lipgloss.AdaptiveColor{Light: completeColor("#EEEBFF", "255", "7"), Dark: completeColor("#1B1731", "235", "8")}).
+			Padding(1, 2) //nolint: gomnd
+	errorStyle = baseStyle.
+			Foreground(red).
+			Background(lipgloss.AdaptiveColor{Light: completeColor("#FFEBEB", "255", "7"), Dark: completeColor("#2B1A1A", "235", "8")}).
 			Padding(1, 2) //nolint: gomnd
 	keyPathStyle = lipgloss.NewStyle().Foreground(violet)
 
@@ -183,7 +188,11 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 
 			// Handle --all flag
 			if all {
-				return sliceAll(keyPath, raw, seedPassphrase)
+				err := sliceAll(keyPath, raw, seedPassphrase)
+				if err != nil && strings.Contains(err.Error(), "key is not password-protected") {
+					return formatSliceError(err)
+				}
+				return err
 			}
 
 			// Show warning for 16 words (polyseed format) unless --raw is used
@@ -193,6 +202,9 @@ Valid word counts are: 12, 15, 16, 18, 21, or 24.
 
 			mnemonic, err := slice(keyPath, nil, wordCount, seedPassphrase)
 			if err != nil {
+				if strings.Contains(err.Error(), "key is not password-protected") {
+					return formatSliceError(err)
+				}
 				return err
 			}
 
@@ -350,15 +362,32 @@ func slice(path string, pass []byte, wordCount int, seedPassphrase string) (stri
 		return "", fmt.Errorf("could not read key: %w", err)
 	}
 
+	// Check if key is password-protected (required for slice command)
+	// We need to check this before attempting to parse with a password
+	// because if pass is nil, we want to detect unencrypted keys
+	if pass == nil {
+		isProtected, err := isKeyPasswordProtected(bts)
+		if err != nil {
+			// If we can't determine, continue with normal parsing flow
+		} else if !isProtected {
+			// Key is not password-protected - reject it
+			return "", fmt.Errorf("key is not password-protected: password-protected keys are required for slice command")
+		}
+	}
+
 	key, err := parsePrivateKey(bts, pass)
 	if err != nil && isPasswordError(err) {
+		// Key requires a password - ask for it and parse again with the same bytes
 		pass, err := askKeyPassphrase(path)
 		if err != nil {
 			return "", err
 		}
-		return slice(path, pass, wordCount, seedPassphrase)
-	}
-	if err != nil {
+		// Parse again with the password using the bytes we already have
+		key, err = parsePrivateKey(bts, pass)
+		if err != nil {
+			return "", fmt.Errorf("could not parse key with passphrase: %w", err)
+		}
+	} else if err != nil {
 		return "", fmt.Errorf("could not parse key: %w", err)
 	}
 
@@ -393,15 +422,32 @@ func sliceAllWithPass(path string, rawOutput bool, seedPassphrase string, pass [
 		return fmt.Errorf("could not read key: %w", err)
 	}
 
+	// Check if key is password-protected (required for slice command)
+	// We need to check this before attempting to parse with a password
+	// because if pass is nil, we want to detect unencrypted keys
+	if pass == nil {
+		isProtected, err := isKeyPasswordProtected(bts)
+		if err != nil {
+			// If we can't determine, continue with normal parsing flow
+		} else if !isProtected {
+			// Key is not password-protected - reject it
+			return fmt.Errorf("key is not password-protected: password-protected keys are required for slice command")
+		}
+	}
+
 	key, err := parsePrivateKey(bts, pass)
 	if err != nil && isPasswordError(err) {
+		// Key requires a password - ask for it and parse again with the same bytes
 		pass, err := askKeyPassphrase(path)
 		if err != nil {
 			return err
 		}
-		return sliceAllWithPass(path, rawOutput, seedPassphrase, pass)
-	}
-	if err != nil {
+		// Parse again with the password using the bytes we already have
+		key, err = parsePrivateKey(bts, pass)
+		if err != nil {
+			return fmt.Errorf("could not parse key with passphrase: %w", err)
+		}
+	} else if err != nil {
 		return fmt.Errorf("could not parse key: %w", err)
 	}
 
@@ -474,6 +520,25 @@ func isPasswordError(err error) bool {
 	return errors.As(err, &kerr)
 }
 
+// isKeyPasswordProtected checks if an SSH key requires a password.
+// It attempts to parse the key without a password. If parsing succeeds,
+// the key is not password-protected. If it fails with PassphraseMissingError,
+// the key is password-protected.
+func isKeyPasswordProtected(bts []byte) (bool, error) {
+	_, err := parsePrivateKey(bts, nil)
+	if err == nil {
+		// Key parsed successfully without password - not password-protected
+		return false, nil
+	}
+	if isPasswordError(err) {
+		// Key requires a password - password-protected
+		return true, nil
+	}
+	// Some other error occurred - we can't determine if it's password-protected
+	// Return the error so the caller can handle it
+	return false, fmt.Errorf("could not determine if key is password-protected: %w", err)
+}
+
 func marshallPrivateKey(key ed25519.PrivateKey, pass []byte) (*pem.Block, error) {
 	if len(pass) == 0 {
 		//nolint: wrapcheck
@@ -541,6 +606,25 @@ func getWidth(maxw int) int {
 func renderBlock(w io.Writer, s lipgloss.Style, width int, str string) {
 	_, _ = io.WriteString(w, s.Width(width).Render(str))
 	_, _ = io.WriteString(w, "\n")
+}
+
+// formatSliceError formats an error message for the slice command with purple styling,
+// similar to the success message format. It displays the styled error and returns
+// a simple error so the command exits with a non-zero code.
+func formatSliceError(err error) error {
+	if isatty.IsTerminal(os.Stdout.Fd()) {
+		b := strings.Builder{}
+		w := getWidth(maxWidth)
+
+		b.WriteRune('\n')
+		renderBlock(&b, errorStyle, w, err.Error())
+		b.WriteRune('\n')
+
+		fmt.Print(b.String())
+	}
+	// Return a simple error message (cobra may print this to stderr, but the styled
+	// version has already been shown)
+	return fmt.Errorf("password-protected keys are required for slice command")
 }
 
 func completeColor(truecolor, ansi256, ansi string) string {
