@@ -374,6 +374,11 @@ func slice(path string, pass []byte, wordCount int, seedPassphrase string) (stri
 // sliceAll generates seed phrases for all word counts and formats them nicely.
 // seedPassphrase is combined with the SSH key seed to add additional entropy.
 func sliceAll(path string, rawOutput bool, seedPassphrase string) error {
+	return sliceAllWithPass(path, rawOutput, seedPassphrase, nil)
+}
+
+// sliceAllWithPass is the internal implementation that handles password-protected keys.
+func sliceAllWithPass(path string, rawOutput bool, seedPassphrase string, pass []byte) error {
 	// All valid word counts in order
 	wordCounts := []int{12, 15, 16, 18, 21, 24}
 
@@ -388,16 +393,13 @@ func sliceAll(path string, rawOutput bool, seedPassphrase string) error {
 		return fmt.Errorf("could not read key: %w", err)
 	}
 
-	key, err := parsePrivateKey(bts, nil)
+	key, err := parsePrivateKey(bts, pass)
 	if err != nil && isPasswordError(err) {
 		pass, err := askKeyPassphrase(path)
 		if err != nil {
 			return err
 		}
-		key, err = parsePrivateKey(bts, pass)
-		if err != nil {
-			return fmt.Errorf("could not parse key: %w", err)
-		}
+		return sliceAllWithPass(path, rawOutput, seedPassphrase, pass)
 	}
 	if err != nil {
 		return fmt.Errorf("could not parse key: %w", err)
