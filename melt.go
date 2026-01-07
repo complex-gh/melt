@@ -9,7 +9,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"polyseed"
+	"github.com/complex-gh/polyseed_go"
 
 	"github.com/tyler-smith/go-bip39"
 )
